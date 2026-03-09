@@ -239,13 +239,17 @@ function extractTeammateMessage(record: { role: string; content: unknown }): Tea
             }
         }
 
-        // idle_notification — update member status
+        // idle_notification — update member status and mark agent task as completed
         if (parsed.type === 'idle_notification') {
             return {
                 _action: 'update',
                 members: [{
                     name: memberId,
                     status: 'idle'
+                }],
+                tasks: [{
+                    id: `agent:${memberId}`,
+                    status: 'completed'
                 }],
                 updatedAt: now
             }
