@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import type { TeamState, TeamMember, TeamTask, TeamMessage, DecryptedMessage } from '@hapi/protocol/types'
+import type { TeamState, TeamMember, TeamTask, TeamMessage, TeamPermission, DecryptedMessage } from '@hapi/protocol/types'
+import type { ApiClient } from '@/api/client'
 import { isObject } from '@hapi/protocol'
 
 // --- Teammate activity extraction from conversation messages ---
@@ -123,9 +124,78 @@ function taskStatusClass(status?: string): string {
 
 // --- Components ---
 
-function MemberCard({ member, activity }: { member: TeamMember; activity?: TeammateActivity }) {
+function PermissionCard({ permission, onApprove, onDeny }: {
+    permission: TeamPermission
+    onApprove: () => void
+    onDeny: () => void
+}) {
+    const [acted, setActed] = useState<'approve' | 'deny' | null>(null)
+
+    const handleApprove = () => {
+        setActed('approve')
+        onApprove()
+    }
+
+    const handleDeny = () => {
+        setActed('deny')
+        onDeny()
+    }
+
+    if (acted) {
+        return (
+            <div className="rounded border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-1.5">
+                <div className="flex items-center gap-1.5 text-[10px] text-[var(--app-hint)]">
+                    <span>{acted === 'approve' ? '✓' : '✕'}</span>
+                    <span>{permission.toolName} — {acted === 'approve' ? 'allowed' : 'denied'}</span>
+                </div>
+            </div>
+        )
+    }
+
+    return (
+        <div className="rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5">
+            <div className="flex items-center gap-1.5 text-[11px]">
+                <span className="text-amber-600">🔐</span>
+                <span className="font-medium text-[var(--app-fg)]">{permission.toolName}</span>
+            </div>
+            {permission.description && (
+                <div className="mt-0.5 text-[10px] text-[var(--app-hint)]">
+                    {permission.description}
+                </div>
+            )}
+            <div className="mt-1.5 flex gap-1.5">
+                <button
+                    type="button"
+                    onClick={handleApprove}
+                    className="rounded bg-emerald-600 px-2 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-emerald-700"
+                >
+                    Allow
+                </button>
+                <button
+                    type="button"
+                    onClick={handleDeny}
+                    className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-red-700"
+                >
+                    Deny
+                </button>
+            </div>
+        </div>
+    )
+}
+
+function MemberCard({ member, activity, permissions, onApprovePermission, onDenyPermission }: {
+    member: TeamMember
+    activity?: TeammateActivity
+    permissions: TeamPermission[]
+    onApprovePermission?: (permission: TeamPermission) => void
+    onDenyPermission?: (permission: TeamPermission) => void
+}) {
     const [expanded, setExpanded] = useState(false)
     const isActive = member.status === 'active'
+    const hasPendingPerms = permissions.length > 0
+
+    // Auto-expand when there are pending permissions
+    const shouldExpand = expanded || hasPendingPerms
 
     return (
         <div className="overflow-hidden rounded-md bg-[var(--app-subtle-bg)]">
@@ -140,6 +210,11 @@ function MemberCard({ member, activity }: { member: TeamMember; activity?: Teamm
                         <span className="truncate text-xs font-medium text-[var(--app-fg)]">
                             {member.name}
                         </span>
+                        {hasPendingPerms && (
+                            <span className="shrink-0 animate-pulse rounded-full bg-amber-500 px-1.5 py-px text-[10px] font-medium text-white">
+                                🔐 {permissions.length}
+                            </span>
+                        )}
                         {member.agentType && (
                             <span className="shrink-0 rounded bg-[var(--app-border)] px-1 py-px text-[10px] text-[var(--app-hint)]">
                                 {member.agentType}
@@ -167,17 +242,27 @@ function MemberCard({ member, activity }: { member: TeamMember; activity?: Teamm
                 </span>
                 {/* Expand indicator */}
                 <svg
-                    className={`h-3 w-3 shrink-0 text-[var(--app-hint)] transition-transform ${expanded ? 'rotate-180' : ''}`}
+                    className={`h-3 w-3 shrink-0 text-[var(--app-hint)] transition-transform ${shouldExpand ? 'rotate-180' : ''}`}
                     viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
                 >
                     <path d="m6 9 6 6 6-6" />
                 </svg>
             </button>
 
-            {expanded && (
+            {shouldExpand && (
                 <div className="border-t border-[var(--app-border)] px-2.5 py-2">
+                    {/* Pending permissions */}
+                    {permissions.map(perm => (
+                        <PermissionCard
+                            key={perm.requestId}
+                            permission={perm}
+                            onApprove={() => onApprovePermission?.(perm)}
+                            onDeny={() => onDenyPermission?.(perm)}
+                        />
+                    ))}
+
                     {activity?.toolCalls?.[0]?.description && (
-                        <div className="mb-1.5 text-[11px] text-[var(--app-fg)]">
+                        <div className={`${permissions.length > 0 ? 'mt-1.5' : ''} text-[11px] text-[var(--app-fg)]`}>
                             <span className="font-medium">Task:</span> {activity.toolCalls[0].description}
                         </div>
                     )}
@@ -187,11 +272,11 @@ function MemberCard({ member, activity }: { member: TeamMember; activity?: Teamm
                                 {activity.lastOutput}
                             </pre>
                         </div>
-                    ) : (
+                    ) : !hasPendingPerms ? (
                         <div className="text-[10px] text-[var(--app-hint)]">
                             {isActive ? 'Working...' : 'No output yet'}
                         </div>
-                    )}
+                    ) : null}
                 </div>
             )}
         </div>
@@ -258,23 +343,49 @@ function ProgressBar({ completed, total }: { completed: number; total: number })
     )
 }
 
-export function TeamPanel(props: { teamState: TeamState; messages?: DecryptedMessage[] }) {
+export function TeamPanel(props: {
+    teamState: TeamState
+    messages?: DecryptedMessage[]
+    api?: ApiClient
+    sessionId?: string
+    onSend?: (text: string) => void
+}) {
     const { teamState, messages: conversationMessages } = props
     const members = teamState.members ?? []
     const tasks = teamState.tasks ?? []
     const messages = teamState.messages ?? []
+    const pendingPermissions = (teamState.pendingPermissions ?? []).filter(p => p.status === 'pending')
 
     const activeMembers = members.filter(m => m.status === 'active').length
     const completedTasks = tasks.filter(t => t.status === 'completed').length
     const hasActivity = activeMembers > 0 || tasks.some(t => t.status === 'in_progress')
+    const totalPendingPerms = pendingPermissions.length
 
     const activities = useMemo(
         () => conversationMessages ? extractTeammateActivities(conversationMessages) : new Map<string, TeammateActivity>(),
         [conversationMessages]
     )
 
-    // Default expanded when there's active work
-    const [expanded, setExpanded] = useState(hasActivity)
+    const memberPermissions = useMemo(() => {
+        const map = new Map<string, TeamPermission[]>()
+        for (const perm of pendingPermissions) {
+            const existing = map.get(perm.memberName) ?? []
+            existing.push(perm)
+            map.set(perm.memberName, existing)
+        }
+        return map
+    }, [pendingPermissions])
+
+    const handleApprovePermission = (perm: TeamPermission) => {
+        props.onSend?.(`Approve ${perm.memberName}'s permission request to use ${perm.toolName}. Request ID: ${perm.requestId}`)
+    }
+
+    const handleDenyPermission = (perm: TeamPermission) => {
+        props.onSend?.(`Deny ${perm.memberName}'s permission request to use ${perm.toolName}. Request ID: ${perm.requestId}`)
+    }
+
+    // Default expanded when there's active work or pending permissions
+    const [expanded, setExpanded] = useState(hasActivity || totalPendingPerms > 0)
 
     return (
         <div className="mx-3 mt-3">
@@ -312,6 +423,11 @@ export function TeamPanel(props: { teamState: TeamState; messages?: DecryptedMes
                             {completedTasks}/{tasks.length} tasks
                         </span>
                     )}
+                    {totalPendingPerms > 0 && (
+                        <span className="animate-pulse rounded-full bg-amber-500 px-1.5 py-px font-medium text-white">
+                            🔐 {totalPendingPerms} pending
+                        </span>
+                    )}
                 </div>
 
                 {/* Expand chevron */}
@@ -346,6 +462,9 @@ export function TeamPanel(props: { teamState: TeamState; messages?: DecryptedMes
                                         key={member.name}
                                         member={member}
                                         activity={activities.get(member.name)}
+                                        permissions={memberPermissions.get(member.name) ?? []}
+                                        onApprovePermission={handleApprovePermission}
+                                        onDenyPermission={handleDenyPermission}
                                     />
                                 ))}
                             </div>

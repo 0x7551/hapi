@@ -130,12 +130,25 @@ export const TeamMessageSchema = z.object({
 
 export type TeamMessage = z.infer<typeof TeamMessageSchema>
 
+export const TeamPermissionSchema = z.object({
+    requestId: z.string(),
+    memberName: z.string(),
+    toolName: z.string(),
+    description: z.string().optional(),
+    input: z.unknown().optional(),
+    createdAt: z.number(),
+    status: z.enum(['pending', 'approved', 'denied']).optional()
+})
+
+export type TeamPermission = z.infer<typeof TeamPermissionSchema>
+
 export const TeamStateSchema = z.object({
     teamName: z.string(),
     description: z.string().optional(),
     members: z.array(TeamMemberSchema).optional(),
     tasks: z.array(TeamTaskSchema).optional(),
     messages: z.array(TeamMessageSchema).optional(),
+    pendingPermissions: z.array(TeamPermissionSchema).optional(),
     updatedAt: z.number().optional()
 })
 

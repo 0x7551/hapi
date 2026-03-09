@@ -177,9 +177,75 @@ function processSendMessage(input: Record<string, unknown>): TeamStateDelta | nu
     return delta
 }
 
+function extractTeammateMessageText(record: { role: string; content: unknown }): string | null {
+    // Direct user message: { role: 'user', content: '<teammate-message>...' | { type: 'text', text: '...' } }
+    if (record.role === 'user') {
+        if (typeof record.content === 'string') return record.content
+        if (isObject(record.content) && record.content.type === 'text' && typeof record.content.text === 'string') {
+            return record.content.text
+        }
+    }
+
+    // Agent-wrapped (isSidechain/isMeta): { role: 'agent', content: { type: 'output', data: { type: 'user', message: { content: '...' } } } }
+    if (record.role === 'agent' && isObject(record.content) && record.content.type === 'output') {
+        const data = isObject(record.content.data) ? record.content.data : null
+        if (data && data.type === 'user' && isObject(data.message) && typeof data.message.content === 'string') {
+            return data.message.content
+        }
+    }
+
+    return null
+}
+
+function extractTeammatePermissionRequest(record: { role: string; content: unknown }): TeamStateDelta | null {
+    const text = extractTeammateMessageText(record)
+    if (!text || !text.includes('<teammate-message')) return null
+
+    // Extract teammate_id and JSON content from <teammate-message> tags
+    const tagMatch = text.match(/<teammate-message\s+[^>]*teammate_id="([^"]+)"[^>]*>([\s\S]*?)<\/teammate-message>/)
+    if (!tagMatch) return null
+
+    const memberId = tagMatch[1]
+    const jsonStr = tagMatch[2].trim()
+
+    let parsed: Record<string, unknown>
+    try {
+        parsed = JSON.parse(jsonStr) as Record<string, unknown>
+    } catch {
+        return null
+    }
+
+    if (parsed.type !== 'permission_request') return null
+
+    const requestId = typeof parsed.request_id === 'string' ? parsed.request_id : null
+    const toolName = typeof parsed.tool_name === 'string' ? parsed.tool_name : null
+    if (!requestId || !toolName) return null
+
+    const description = typeof parsed.description === 'string' ? parsed.description : undefined
+    const input = parsed.input
+
+    return {
+        _action: 'update',
+        pendingPermissions: [{
+            requestId,
+            memberName: memberId,
+            toolName,
+            description,
+            input,
+            createdAt: Date.now(),
+            status: 'pending'
+        }],
+        updatedAt: Date.now()
+    }
+}
+
 export function extractTeamStateFromMessageContent(messageContent: unknown): TeamStateDelta | null {
     const record = unwrapRoleWrappedRecordEnvelope(messageContent)
     if (!record) return null
+
+    // Check for teammate permission requests in user messages
+    const permDelta = extractTeammatePermissionRequest(record)
+    if (permDelta) return permDelta
 
     if (record.role !== 'agent' && record.role !== 'assistant') return null
     if (!isObject(record.content) || typeof record.content.type !== 'string') return null
@@ -246,6 +312,9 @@ function mergeDelta(base: TeamStateDelta, incoming: TeamStateDelta): TeamStateDe
     if (incoming.messages) {
         merged.messages = [...(merged.messages ?? []), ...incoming.messages]
     }
+    if (incoming.pendingPermissions) {
+        merged.pendingPermissions = [...(merged.pendingPermissions ?? []), ...incoming.pendingPermissions]
+    }
     if (incoming.updatedAt) {
         merged.updatedAt = incoming.updatedAt
     }
@@ -300,6 +369,14 @@ export function applyTeamStateDelta(
     if (delta.messages) {
         const msgs = updated.messages ?? []
         updated.messages = [...msgs, ...delta.messages].slice(-50)
+    }
+
+    if (delta.pendingPermissions) {
+        const permMap = new Map((updated.pendingPermissions ?? []).map(p => [p.requestId, p]))
+        for (const perm of delta.pendingPermissions) {
+            permMap.set(perm.requestId, perm)
+        }
+        updated.pendingPermissions = Array.from(permMap.values())
     }
 
     if (delta.updatedAt) {
