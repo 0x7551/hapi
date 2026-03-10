@@ -13,18 +13,19 @@ import { BaseSessionScanner, SessionFileScanEntry, SessionFileScanResult, Sessio
 const INTERNAL_CLAUDE_EVENT_TYPES = new Set([
     'file-history-snapshot',
     'change',
-    'queue-operation',
 ]);
 
 export async function createSessionScanner(opts: {
     sessionId: string | null;
     workingDirectory: string;
     onMessage: (message: RawJSONLines) => void;
+    seedExistingMessages?: boolean;
 }) {
     const scanner = new ClaudeSessionScanner({
         sessionId: opts.sessionId,
         workingDirectory: opts.workingDirectory,
-        onMessage: opts.onMessage
+        onMessage: opts.onMessage,
+        seedExistingMessages: opts.seedExistingMessages ?? true
     });
 
     await scanner.start();
@@ -45,16 +46,18 @@ export type SessionScanner = ReturnType<typeof createSessionScanner>;
 class ClaudeSessionScanner extends BaseSessionScanner<RawJSONLines> {
     private readonly projectDir: string;
     private readonly onMessage: (message: RawJSONLines) => void;
+    private readonly seedExistingMessages: boolean;
     private readonly finishedSessions = new Set<string>();
     private readonly pendingSessions = new Set<string>();
     private currentSessionId: string | null;
     private readonly scannedSessions = new Set<string>();
 
-    constructor(opts: { sessionId: string | null; workingDirectory: string; onMessage: (message: RawJSONLines) => void }) {
+    constructor(opts: { sessionId: string | null; workingDirectory: string; onMessage: (message: RawJSONLines) => void; seedExistingMessages: boolean }) {
         super({ intervalMs: 3000 });
         this.projectDir = getProjectPath(opts.workingDirectory);
         this.onMessage = opts.onMessage;
         this.currentSessionId = opts.sessionId;
+        this.seedExistingMessages = opts.seedExistingMessages;
     }
 
     public onNewSession(sessionId: string): void {
@@ -84,6 +87,11 @@ class ClaudeSessionScanner extends BaseSessionScanner<RawJSONLines> {
         }
         const sessionFile = this.sessionFilePath(this.currentSessionId);
         const { events, totalLines } = await readSessionLog(sessionFile, 0);
+        if (!this.seedExistingMessages) {
+            logger.debug(`[SESSION_SCANNER] Replaying existing messages from session ${this.currentSessionId}`);
+            this.setCursor(sessionFile, 0);
+            return;
+        }
         logger.debug(`[SESSION_SCANNER] Marking ${events.length} existing messages as processed from session ${this.currentSessionId}`);
         const keys = events.map((entry) => messageKey(entry.event));
         this.seedProcessedKeys(keys);
@@ -196,6 +204,25 @@ async function readSessionLog(filePath: string, startLine: number): Promise<{ ev
                 continue;
             }
             let message = JSON.parse(l);
+
+            // queue-operation/enqueue can carry teammate mailbox payloads before they
+            // are surfaced as user records. Convert to synthetic user messages so
+            // remote mode can forward team updates without waiting for a new turn.
+            if (message.type === 'queue-operation' && message.operation === 'enqueue' && typeof message.content === 'string') {
+                const synthetic: RawJSONLines = {
+                    type: 'user',
+                    uuid: `queue-op:${message.sessionId ?? 'unknown'}:${index}`,
+                    isMeta: true,
+                    message: {
+                        role: 'user',
+                        content: message.content
+                    },
+                    sessionId: typeof message.sessionId === 'string' ? message.sessionId : undefined,
+                    timestamp: typeof message.timestamp === 'string' ? message.timestamp : undefined
+                };
+                messages.push({ event: synthetic, lineIndex: index });
+                continue;
+            }
             
             // Silently skip known internal Claude Code events
             // These are state/tracking events, not conversation messages

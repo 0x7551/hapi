@@ -126,6 +126,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
         const scanner = await createSessionScanner({
             sessionId: session.sessionId,
             workingDirectory: session.path,
+            seedExistingMessages: false,
             onMessage: (message) => {
                 if (!containsTeamSignal(message)) {
                     return;
