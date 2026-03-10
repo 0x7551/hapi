@@ -98,6 +98,7 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
 
         const teamDelta = extractTeamStateFromMessageContent(content)
         if (teamDelta) {
+            console.log('[teams] delta extracted:', JSON.stringify(teamDelta).slice(0, 500))
             const existingSession = store.sessions.getSession(sid)
             const existingTeamState = existingSession?.teamState as import('@hapi/protocol/types').TeamState | null | undefined
             const newTeamState = applyTeamStateDelta(existingTeamState ?? null, teamDelta)

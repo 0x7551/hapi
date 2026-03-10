@@ -178,19 +178,37 @@ function processSendMessage(input: Record<string, unknown>): TeamStateDelta | nu
 }
 
 function extractTeammateMessageText(record: { role: string; content: unknown }): string | null {
-    // Direct user message: { role: 'user', content: '<teammate-message>...' | { type: 'text', text: '...' } }
+    // Direct user message: { role: 'user', content: '<teammate-message>...' | { type: 'text', text: '...' } | [{ type: 'text', text: '...' }] }
     if (record.role === 'user') {
         if (typeof record.content === 'string') return record.content
         if (isObject(record.content) && record.content.type === 'text' && typeof record.content.text === 'string') {
             return record.content.text
         }
+        // Handle array content blocks (Anthropic API format)
+        if (Array.isArray(record.content)) {
+            for (const block of record.content) {
+                if (isObject(block) && block.type === 'text' && typeof block.text === 'string') {
+                    if (block.text.includes('<teammate-message')) return block.text
+                }
+            }
+        }
+        // Debug: log unhandled content type
+        console.log('[teams] extractTeammateMessageText: user role, content type:', typeof record.content, Array.isArray(record.content) ? 'array' : '', JSON.stringify(record.content).slice(0, 200))
     }
 
     // Agent-wrapped (isSidechain/isMeta): { role: 'agent', content: { type: 'output', data: { type: 'user', message: { content: '...' } } } }
     if (record.role === 'agent' && isObject(record.content) && record.content.type === 'output') {
         const data = isObject(record.content.data) ? record.content.data : null
-        if (data && data.type === 'user' && isObject(data.message) && typeof data.message.content === 'string') {
-            return data.message.content
+        if (data && data.type === 'user' && isObject(data.message)) {
+            if (typeof data.message.content === 'string') return data.message.content
+            // Handle array content blocks in agent-wrapped format
+            if (Array.isArray(data.message.content)) {
+                for (const block of data.message.content) {
+                    if (isObject(block) && block.type === 'text' && typeof block.text === 'string') {
+                        if (block.text.includes('<teammate-message')) return block.text
+                    }
+                }
+            }
         }
     }
 
@@ -288,11 +306,25 @@ function extractTeammateMessage(record: { role: string; content: unknown }): Tea
 
 export function extractTeamStateFromMessageContent(messageContent: unknown): TeamStateDelta | null {
     const record = unwrapRoleWrappedRecordEnvelope(messageContent)
-    if (!record) return null
+    if (!record) {
+        // Debug: log raw content shape for teammate messages
+        if (isObject(messageContent)) {
+            const strContent = JSON.stringify(messageContent).slice(0, 300)
+            if (strContent.includes('teammate-message') || strContent.includes('idle_notification')) {
+                console.log('[teams] unwrap failed for teammate msg, raw:', strContent)
+            }
+        }
+        return null
+    }
 
     // Check for teammate messages (permissions, output, idle, etc.)
     const teammateDelta = extractTeammateMessage(record)
     if (teammateDelta) return teammateDelta
+
+    // Debug: log teammate messages that didn't produce a delta
+    if (record.role === 'user' && typeof record.content === 'string' && record.content.includes('teammate-message')) {
+        console.log('[teams] teammate msg found but no delta, content preview:', record.content.slice(0, 300))
+    }
 
     if (record.role !== 'agent' && record.role !== 'assistant') return null
     if (!isObject(record.content) || typeof record.content.type !== 'string') return null
