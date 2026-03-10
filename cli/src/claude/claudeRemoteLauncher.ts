@@ -114,43 +114,13 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
             return true;
         };
 
-        const extractText = (value: unknown): string => {
-            if (typeof value === 'string') {
-                return value;
-            }
-            if (Array.isArray(value)) {
-                return value
-                    .map((item) => {
-                        if (!item || typeof item !== 'object') return '';
-                        if ('text' in item && typeof (item as any).text === 'string') {
-                            return (item as any).text as string;
-                        }
-                        if ('content' in item && typeof (item as any).content === 'string') {
-                            return (item as any).content as string;
-                        }
-                        return '';
-                    })
-                    .filter(Boolean)
-                    .join('\n');
-            }
-            if (value && typeof value === 'object') {
-                if ('text' in value && typeof (value as any).text === 'string') {
-                    return (value as any).text as string;
-                }
-                if ('content' in value && typeof (value as any).content === 'string') {
-                    return (value as any).content as string;
-                }
-            }
-            return '';
-        };
-
         const containsTeamSignal = (entry: RawJSONLines): boolean => {
             if (entry.type !== 'user') return false;
-            const contentText = extractText(entry.message.content);
-            if (!contentText) return false;
-            return contentText.includes('<teammate-message')
-                || contentText.includes('"type":"permission_request"')
-                || contentText.includes('"type":"idle_notification"');
+            const payload = JSON.stringify(entry.message.content);
+            if (!payload) return false;
+            return payload.includes('teammate-message')
+                || payload.includes('permission_request')
+                || payload.includes('idle_notification');
         };
 
         const scanner = await createSessionScanner({
@@ -165,8 +135,10 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                     content: message.type === 'user' ? message.message.content : null
                 });
                 if (!rememberForwardedTeamPayload(payloadKey)) {
+                    logger.debug('[remote][team-scanner] deduped teammate payload');
                     return;
                 }
+                logger.debug(`[remote][team-scanner] forwarding teammate message uuid=${message.uuid}`);
                 session.client.sendClaudeSessionMessage(message);
             }
         });
