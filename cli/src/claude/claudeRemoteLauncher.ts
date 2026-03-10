@@ -11,6 +11,8 @@ import { SDKToLogConverter } from "./utils/sdkToLogConverter";
 import { PLAN_FAKE_REJECT } from "./sdk/prompts";
 import { EnhancedMode } from "./loop";
 import { OutgoingMessageQueue } from "./utils/OutgoingMessageQueue";
+import { createSessionScanner } from "./utils/sessionScanner";
+import type { RawJSONLines } from "./types";
 import type { ClaudePermissionMode } from "@hapi/protocol/types";
 import {
     RemoteLauncherBase,
@@ -93,6 +95,86 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
 
         const permissionHandler = new PermissionHandler(session);
         this.permissionHandler = permissionHandler;
+
+        const recentlyForwardedTeamPayloads = new Set<string>();
+        const teamPayloadOrder: string[] = [];
+        const MAX_TEAM_PAYLOAD_CACHE = 256;
+        const rememberForwardedTeamPayload = (payload: string): boolean => {
+            if (recentlyForwardedTeamPayloads.has(payload)) {
+                return false;
+            }
+            recentlyForwardedTeamPayloads.add(payload);
+            teamPayloadOrder.push(payload);
+            if (teamPayloadOrder.length > MAX_TEAM_PAYLOAD_CACHE) {
+                const oldest = teamPayloadOrder.shift();
+                if (oldest) {
+                    recentlyForwardedTeamPayloads.delete(oldest);
+                }
+            }
+            return true;
+        };
+
+        const extractText = (value: unknown): string => {
+            if (typeof value === 'string') {
+                return value;
+            }
+            if (Array.isArray(value)) {
+                return value
+                    .map((item) => {
+                        if (!item || typeof item !== 'object') return '';
+                        if ('text' in item && typeof (item as any).text === 'string') {
+                            return (item as any).text as string;
+                        }
+                        if ('content' in item && typeof (item as any).content === 'string') {
+                            return (item as any).content as string;
+                        }
+                        return '';
+                    })
+                    .filter(Boolean)
+                    .join('\n');
+            }
+            if (value && typeof value === 'object') {
+                if ('text' in value && typeof (value as any).text === 'string') {
+                    return (value as any).text as string;
+                }
+                if ('content' in value && typeof (value as any).content === 'string') {
+                    return (value as any).content as string;
+                }
+            }
+            return '';
+        };
+
+        const containsTeamSignal = (entry: RawJSONLines): boolean => {
+            if (entry.type !== 'user') return false;
+            const contentText = extractText(entry.message.content);
+            if (!contentText) return false;
+            return contentText.includes('<teammate-message')
+                || contentText.includes('"type":"permission_request"')
+                || contentText.includes('"type":"idle_notification"');
+        };
+
+        const scanner = await createSessionScanner({
+            sessionId: session.sessionId,
+            workingDirectory: session.path,
+            onMessage: (message) => {
+                if (!containsTeamSignal(message)) {
+                    return;
+                }
+                const payloadKey = JSON.stringify({
+                    type: message.type,
+                    content: message.type === 'user' ? message.message.content : null
+                });
+                if (!rememberForwardedTeamPayload(payloadKey)) {
+                    return;
+                }
+                session.client.sendClaudeSessionMessage(message);
+            }
+        });
+
+        const scannerSessionFoundHandler = (sessionId: string) => {
+            scanner.onNewSession(sessionId);
+        };
+        session.addSessionFoundCallback(scannerSessionFoundHandler);
 
         const messageQueue = new OutgoingMessageQueue(
             (logMessage) => session.client.sendClaudeSessionMessage(logMessage)
@@ -393,6 +475,8 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                 }
             }
         } finally {
+            session.removeSessionFoundCallback(scannerSessionFoundHandler);
+            await scanner.cleanup();
             if (this.permissionHandler) {
                 this.permissionHandler.reset();
             }
