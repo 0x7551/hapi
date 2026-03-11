@@ -1,5 +1,6 @@
 import { isPermissionModeAllowedForFlavor } from '@hapi/protocol'
 import { PermissionModeSchema } from '@hapi/protocol/schemas'
+import type { TeamState } from '@hapi/protocol/types'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import type { SyncEngine } from '../../sync/syncEngine'
@@ -25,6 +26,33 @@ const approveBodySchema = z.object({
 const denyBodySchema = z.object({
     decision: decisionSchema.optional()
 })
+
+/**
+ * Update the teamState.pendingPermissions status for a given requestId (toolUseId).
+ * This keeps the TeamPanel UI in sync after API-based approval/denial.
+ */
+function updateTeamPermissionStatus(
+    engine: SyncEngine,
+    sessionId: string,
+    session: { teamState?: TeamState | null; namespace: string },
+    requestId: string,
+    status: 'approved' | 'denied'
+): void {
+    const teamState = session.teamState as TeamState | null | undefined
+    if (!teamState?.pendingPermissions?.length) return
+
+    const updated = teamState.pendingPermissions.map(p =>
+        (p.requestId === requestId || p.toolUseId === requestId)
+            ? { ...p, status: status as 'approved' | 'denied' }
+            : p
+    )
+
+    // Only persist if something actually changed
+    if (updated.every((p, i) => p === teamState.pendingPermissions![i])) return
+
+    const newTeamState = { ...teamState, pendingPermissions: updated, updatedAt: Date.now() }
+    engine.updateSessionTeamState(sessionId, newTeamState, session.namespace)
+}
 
 export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
@@ -65,6 +93,7 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
         const decision = parsed.data.decision
         const answers = parsed.data.answers
         await engine.approvePermission(sessionId, requestId, mode, allowTools, decision, answers)
+        updateTeamPermissionStatus(engine, sessionId, session, requestId, 'approved')
         return c.json({ ok: true })
     })
 
@@ -94,6 +123,7 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
         }
 
         await engine.denyPermission(sessionId, requestId, parsed.data.decision)
+        updateTeamPermissionStatus(engine, sessionId, session, requestId, 'denied')
         return c.json({ ok: true })
     })
 

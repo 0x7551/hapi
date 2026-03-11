@@ -285,10 +285,13 @@ function extractTeammateMessage(record: { role: string; content: unknown }): Tea
                 const toolName = typeof parsed.tool_name === 'string' ? parsed.tool_name : null
                 if (!requestId || !toolName) continue
 
+                const toolUseId = typeof parsed.tool_use_id === 'string' ? parsed.tool_use_id : undefined
+
                 const delta: TeamStateDelta = {
                     _action: 'update',
                     pendingPermissions: [{
                         requestId,
+                        toolUseId,
                         memberName: memberId,
                         toolName,
                         description: typeof parsed.description === 'string' ? parsed.description : undefined,

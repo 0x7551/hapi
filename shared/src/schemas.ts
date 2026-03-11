@@ -134,6 +134,7 @@ export type TeamMessage = z.infer<typeof TeamMessageSchema>
 
 export const TeamPermissionSchema = z.object({
     requestId: z.string(),
+    toolUseId: z.string().optional(),
     memberName: z.string(),
     toolName: z.string(),
     description: z.string().optional(),

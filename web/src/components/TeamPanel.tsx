@@ -126,19 +126,30 @@ function taskStatusClass(status?: string): string {
 
 function PermissionCard({ permission, onApprove, onDeny }: {
     permission: TeamPermission
-    onApprove: () => void
-    onDeny: () => void
+    onApprove: () => void | Promise<void>
+    onDeny: () => void | Promise<void>
 }) {
     const [acted, setActed] = useState<'approve' | 'deny' | null>(null)
+    const [loading, setLoading] = useState(false)
 
-    const handleApprove = () => {
+    const handleApprove = async () => {
+        setLoading(true)
         setActed('approve')
-        onApprove()
+        try {
+            await onApprove()
+        } finally {
+            setLoading(false)
+        }
     }
 
-    const handleDeny = () => {
+    const handleDeny = async () => {
+        setLoading(true)
         setActed('deny')
-        onDeny()
+        try {
+            await onDeny()
+        } finally {
+            setLoading(false)
+        }
     }
 
     if (acted) {
@@ -386,11 +397,31 @@ export function TeamPanel(props: {
         return map
     }, [pendingPermissions])
 
-    const handleApprovePermission = (perm: TeamPermission) => {
+    const handleApprovePermission = async (perm: TeamPermission) => {
+        // Use toolUseId (which matches agentState.requests) if available, fallback to requestId
+        const permId = perm.toolUseId ?? perm.requestId
+        if (props.api && props.sessionId) {
+            try {
+                await props.api.approvePermission(props.sessionId, permId)
+                return
+            } catch {
+                // API failed (e.g. request not found in agentState.requests),
+                // fall back to sending text message to the lead
+            }
+        }
         props.onSend?.(`Approve ${perm.memberName}'s permission request to use ${perm.toolName}. Request ID: ${perm.requestId}`)
     }
 
-    const handleDenyPermission = (perm: TeamPermission) => {
+    const handleDenyPermission = async (perm: TeamPermission) => {
+        const permId = perm.toolUseId ?? perm.requestId
+        if (props.api && props.sessionId) {
+            try {
+                await props.api.denyPermission(props.sessionId, permId)
+                return
+            } catch {
+                // Fall back to text message
+            }
+        }
         props.onSend?.(`Deny ${perm.memberName}'s permission request to use ${perm.toolName}. Request ID: ${perm.requestId}`)
     }
 
