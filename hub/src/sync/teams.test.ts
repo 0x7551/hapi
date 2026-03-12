@@ -156,6 +156,7 @@ describe('extractTeamStateFromMessageContent - Agent tool', () => {
             input: {
                 name: 'builder',
                 description: 'Build the project',
+                team_name: 'my-team',
                 run_in_background: true,
                 isolation: 'worktree'
             }
@@ -171,7 +172,7 @@ describe('extractTeamStateFromMessageContent - Agent tool', () => {
         })
     })
 
-    test('should extract Agent tool without team_name (uses current team context)', () => {
+    test('should NOT extract Agent tool without team_name (standalone subagent)', () => {
         const msg = makeToolCallMessage([{
             name: 'Agent',
             input: {
@@ -181,9 +182,7 @@ describe('extractTeamStateFromMessageContent - Agent tool', () => {
         }])
 
         const delta = extractTeamStateFromMessageContent(msg)
-        expect(delta).toBeTruthy()
-        expect(delta!.members).toHaveLength(1)
-        expect(delta!.members![0].name).toBe('worker')
+        expect(delta).toBeNull()
     })
 
     test('should still extract Task tool with team_name as legacy spawn', () => {
@@ -222,7 +221,7 @@ describe('extractTeamStateFromMessageContent - Agent tool', () => {
             },
             {
                 name: 'Agent',
-                input: { name: 'dev-1', description: 'Frontend work', subagent_type: 'general-purpose' }
+                input: { name: 'dev-1', description: 'Frontend work', subagent_type: 'general-purpose', team_name: 'project-x' }
             }
         ])
 

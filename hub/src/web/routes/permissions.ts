@@ -54,6 +54,47 @@ function updateTeamPermissionStatus(
     engine.updateSessionTeamState(sessionId, newTeamState, session.namespace)
 }
 
+/**
+ * Resolve the correct agentState.requests key for a permission request.
+ *
+ * The requestId from the web UI may be a teammate message ID ("perm-...") or
+ * SDK tool_use_id ("toolu_...") that doesn't match the agentState.requests key.
+ * Try to resolve via teamState.pendingPermissions.toolUseId, which is updated
+ * by syncAgentPermissionsToTeamState to point to the agentState.requests key.
+ */
+function resolveAgentRequestId(
+    requestId: string,
+    requests: Record<string, unknown> | null,
+    teamState: TeamState | null | undefined
+): { agentRequestId: string | null; teamPerm: TeamState['pendingPermissions'][0] | null } {
+    // Direct match
+    if (requests && requests[requestId]) {
+        return { agentRequestId: requestId, teamPerm: null }
+    }
+
+    // Try resolving via teamState
+    const teamPerm = teamState?.pendingPermissions?.find(
+        p => p.requestId === requestId || p.toolUseId === requestId
+    ) ?? null
+
+    if (teamPerm) {
+        if (teamPerm.toolUseId && requests?.[teamPerm.toolUseId]) {
+            return { agentRequestId: teamPerm.toolUseId, teamPerm }
+        }
+        if (teamPerm.requestId && requests?.[teamPerm.requestId]) {
+            return { agentRequestId: teamPerm.requestId, teamPerm }
+        }
+        // Last resort: find by tool name match in agentState.requests
+        for (const [key, req] of Object.entries(requests ?? {})) {
+            if (isObject(req) && req.tool === teamPerm.toolName) {
+                return { agentRequestId: key, teamPerm }
+            }
+        }
+    }
+
+    return { agentRequestId: null, teamPerm }
+}
+
 export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
@@ -78,37 +119,10 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
         }
 
         const requests = session.agentState?.requests ?? null
+        const teamState = session.teamState as TeamState | null | undefined
+        const { agentRequestId, teamPerm } = resolveAgentRequestId(requestId, requests, teamState)
 
-        // Resolve the correct agentState.requests key.
-        // The requestId from the web UI may be a teammate message ID ("perm-...") or
-        // SDK tool_use_id ("toolu_...") that doesn't match the agentState.requests key
-        // ("subagent_..."). Try to resolve via teamState.pendingPermissions.toolUseId.
-        let agentRequestId = requestId
-        if (!(requests && requests[agentRequestId])) {
-            const teamState = session.teamState as TeamState | null | undefined
-            const teamPerm = teamState?.pendingPermissions?.find(
-                p => p.requestId === requestId || p.toolUseId === requestId
-            )
-            if (teamPerm) {
-                // toolUseId is updated by syncAgentPermissionsToTeamState to point
-                // to the agentState.requests key
-                if (teamPerm.toolUseId && requests?.[teamPerm.toolUseId]) {
-                    agentRequestId = teamPerm.toolUseId
-                } else if (teamPerm.requestId && requests?.[teamPerm.requestId]) {
-                    agentRequestId = teamPerm.requestId
-                } else {
-                    // Last resort: find by tool name match in agentState.requests
-                    for (const [key, req] of Object.entries(requests ?? {})) {
-                        if (isObject(req) && req.tool === teamPerm.toolName) {
-                            agentRequestId = key
-                            break
-                        }
-                    }
-                }
-            }
-        }
-
-        if (requests && requests[agentRequestId]) {
+        if (agentRequestId) {
             // RPC path: send approval directly to the CLI agent via RPC
             const mode = parsed.data.mode
             if (mode !== undefined) {
@@ -117,20 +131,13 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
                     return c.json({ error: 'Invalid permission mode for session flavor' }, 400)
                 }
             }
-            const allowTools = parsed.data.allowTools
-            const decision = parsed.data.decision
-            const answers = parsed.data.answers
-            await engine.approvePermission(sessionId, agentRequestId, mode, allowTools, decision, answers)
+            await engine.approvePermission(sessionId, agentRequestId, mode, parsed.data.allowTools, parsed.data.decision, parsed.data.answers)
             updateTeamPermissionStatus(engine, sessionId, session, requestId, 'approved')
             return c.json({ ok: true })
         }
 
-        // Fallback: permission not found in agentState.requests at all.
+        // Fallback: permission not found in agentState.requests.
         // Send approval as a user message so the parent agent can relay it.
-        const teamState = session.teamState as TeamState | null | undefined
-        const teamPerm = teamState?.pendingPermissions?.find(
-            p => p.requestId === requestId || p.toolUseId === requestId
-        )
         if (teamPerm) {
             const approvalText = `Approve ${teamPerm.memberName}'s permission request to use ${teamPerm.toolName}. Request ID: ${teamPerm.requestId}`
             await engine.sendMessage(sessionId, { text: approvalText, sentFrom: 'webapp' })
@@ -162,41 +169,16 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
         }
 
         const requests = session.agentState?.requests ?? null
+        const teamState = session.teamState as TeamState | null | undefined
+        const { agentRequestId, teamPerm } = resolveAgentRequestId(requestId, requests, teamState)
 
-        // Resolve correct agentState.requests key (same logic as approve)
-        let agentRequestId = requestId
-        if (!(requests && requests[agentRequestId])) {
-            const teamState = session.teamState as TeamState | null | undefined
-            const teamPerm = teamState?.pendingPermissions?.find(
-                p => p.requestId === requestId || p.toolUseId === requestId
-            )
-            if (teamPerm) {
-                if (teamPerm.toolUseId && requests?.[teamPerm.toolUseId]) {
-                    agentRequestId = teamPerm.toolUseId
-                } else if (teamPerm.requestId && requests?.[teamPerm.requestId]) {
-                    agentRequestId = teamPerm.requestId
-                } else {
-                    for (const [key, req] of Object.entries(requests ?? {})) {
-                        if (isObject(req) && req.tool === teamPerm.toolName) {
-                            agentRequestId = key
-                            break
-                        }
-                    }
-                }
-            }
-        }
-
-        if (requests && requests[agentRequestId]) {
+        if (agentRequestId) {
             await engine.denyPermission(sessionId, agentRequestId, parsed.data.decision)
             updateTeamPermissionStatus(engine, sessionId, session, requestId, 'denied')
             return c.json({ ok: true })
         }
 
         // Fallback: send denial as a user message
-        const teamState = session.teamState as TeamState | null | undefined
-        const teamPerm = teamState?.pendingPermissions?.find(
-            p => p.requestId === requestId || p.toolUseId === requestId
-        )
         if (teamPerm) {
             const denyText = `Deny ${teamPerm.memberName}'s permission request to use ${teamPerm.toolName}. Request ID: ${teamPerm.requestId}`
             await engine.sendMessage(sessionId, { text: denyText, sentFrom: 'webapp' })

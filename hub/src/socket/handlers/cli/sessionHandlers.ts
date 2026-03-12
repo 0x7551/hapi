@@ -195,12 +195,6 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
 
         const msg = store.messages.addMessage(sid, content, localId)
 
-        // Diagnostic: detect any teammate-related content arriving at hub
-        const contentStr = JSON.stringify(content).slice(0, 500)
-        if (contentStr.includes('teammate-message') || contentStr.includes('teammate_id') || contentStr.includes('permission_request') || contentStr.includes('idle_notification')) {
-            console.log('[teams][diag] teammate content arrived at hub, sid:', sid, 'content:', contentStr)
-        }
-
         const todos = extractTodoWriteTodosFromMessageContent(content)
         if (todos) {
             const updated = store.sessions.setSessionTodos(sid, todos, msg.createdAt, session.namespace)
@@ -211,7 +205,6 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
 
         const teamDelta = extractTeamStateFromMessageContent(content)
         if (teamDelta) {
-            console.log('[teams] delta extracted:', JSON.stringify(teamDelta).slice(0, 500))
             const existingSession = store.sessions.getSessionByNamespace(sid, session.namespace)
             const existingTeamState = existingSession?.teamState as import('@hapi/protocol/types').TeamState | null | undefined
             const newTeamState = applyTeamStateDelta(existingTeamState ?? null, teamDelta)

@@ -458,16 +458,7 @@ function extractTeamCreateResultDelta(record: { role: string; content: unknown }
 
 export function extractTeamStateFromMessageContent(messageContent: unknown): TeamStateDelta | null {
     const record = unwrapRoleWrappedRecordEnvelope(messageContent)
-    if (!record) {
-        // Debug: log raw content shape for teammate messages
-        if (isObject(messageContent)) {
-            const strContent = JSON.stringify(messageContent).slice(0, 300)
-            if (strContent.includes('teammate-message') || strContent.includes('idle_notification')) {
-                console.log('[teams] unwrap failed for teammate msg, raw:', strContent)
-            }
-        }
-        return null
-    }
+    if (!record) return null
 
     // Check for teammate messages (permissions, output, idle, etc.)
     const teammateDelta = extractTeammateMessage(record)
@@ -477,11 +468,6 @@ export function extractTeamStateFromMessageContent(messageContent: unknown): Tea
     // Keep TeamState in sync with the effective runtime team identity.
     const teamCreateResultDelta = extractTeamCreateResultDelta(record)
     if (teamCreateResultDelta) return teamCreateResultDelta
-
-    // Debug: log teammate messages that didn't produce a delta
-    if (record.role === 'user' && typeof record.content === 'string' && record.content.includes('teammate-message')) {
-        console.log('[teams] teammate msg found but no delta, content preview:', record.content.slice(0, 300))
-    }
 
     if (record.role !== 'agent' && record.role !== 'assistant') return null
     if (!isObject(record.content) || typeof record.content.type !== 'string') return null
