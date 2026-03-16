@@ -279,34 +279,12 @@ function extractTeammateMessage(record: { role: string; content: unknown }): Tea
         }
 
         if (parsed) {
-            // permission_request
+            // permission_request — these are informational only.
+            // Teammate permissions are resolved internally by the team lead agent
+            // via SendMessage, not through external approval. Skip storing them
+            // in pendingPermissions to avoid showing unapprovable UI cards.
             if (parsed.type === 'permission_request') {
-                const requestId = typeof parsed.request_id === 'string' ? parsed.request_id : null
-                const toolName = typeof parsed.tool_name === 'string' ? parsed.tool_name : null
-                if (!requestId || !toolName) continue
-
-                const toolUseId = typeof parsed.tool_use_id === 'string' ? parsed.tool_use_id : undefined
-
-                const delta: TeamStateDelta = {
-                    _action: 'update',
-                    pendingPermissions: [{
-                        requestId,
-                        toolUseId,
-                        memberName: memberId,
-                        toolName,
-                        description: typeof parsed.description === 'string' ? parsed.description : undefined,
-                        input: parsed.input,
-                        createdAt: now,
-                        status: 'pending'
-                    }],
-                    messages: [{
-                        from: memberId,
-                        to: 'team-lead',
-                        summary: `${toolName} needs permission`,
-                        type: 'message',
-                        timestamp: now
-                    }],
-                    updatedAt: now
+                continue
                 }
                 result = result ? mergeDelta(result, delta) : delta
                 continue

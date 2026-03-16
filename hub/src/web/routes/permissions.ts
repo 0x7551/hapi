@@ -139,14 +139,8 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
             return c.json({ ok: true })
         }
 
-        // Team permission: try RPC with toolUseId directly
-        if (teamPerm) {
-            const rpcId = teamPerm.toolUseId ?? teamPerm.requestId
-            console.log('[perm][approve] team RPC for:', teamPerm.memberName, teamPerm.toolName, 'rpcId:', rpcId)
-            await engine.approvePermission(sessionId, rpcId, parsed.data.mode, parsed.data.allowTools, parsed.data.decision, parsed.data.answers)
-            updateTeamPermissionStatus(engine, sessionId, session, requestId, 'approved')
-            return c.json({ ok: true, via: 'team-rpc' })
-        }
+        // Team permissions are resolved internally by the team lead agent.
+        // No external approval path exists.
 
         console.log('[perm][approve] 404: no match found')
         return c.json({ error: 'Request not found' }, 404)
@@ -182,13 +176,7 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
             return c.json({ ok: true })
         }
 
-        // Team permission: try RPC with toolUseId directly
-        if (teamPerm) {
-            const rpcId = teamPerm.toolUseId ?? teamPerm.requestId
-            await engine.denyPermission(sessionId, rpcId, parsed.data.decision)
-            updateTeamPermissionStatus(engine, sessionId, session, requestId, 'denied')
-            return c.json({ ok: true, via: 'team-rpc' })
-        }
+        // Team permissions are resolved internally by the team lead agent.
 
         return c.json({ error: 'Request not found' }, 404)
     })
