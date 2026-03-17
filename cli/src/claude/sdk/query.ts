@@ -103,9 +103,7 @@ export class Query implements AsyncIterableIterator<SDKMessage> {
                             }
                             continue
                         } else if (message.type === 'control_request') {
-                            const ctrlReq = message as unknown as CanUseToolControlRequest
-                            logger.debug(`[query] control_request: subtype=${ctrlReq.request?.subtype} tool=${ctrlReq.request?.tool_name} id=${ctrlReq.request_id}`)
-                            await this.handleControlRequest(ctrlReq)
+                            await this.handleControlRequest(message as unknown as CanUseToolControlRequest)
                             continue
                         } else if (message.type === 'control_cancel_request') {
                             this.handleControlCancelRequest(message as unknown as ControlCancelRequest)
@@ -234,14 +232,11 @@ export class Query implements AsyncIterableIterator<SDKMessage> {
             if (!this.canCallTool) {
                 throw new Error('canCallTool callback is not provided.')
             }
-            const result = await this.canCallTool(request.request.tool_name, request.request.input, {
+            return this.canCallTool(request.request.tool_name, request.request.input, {
                 signal
             })
-            logger.debug(`[query] canCallTool result: tool=${request.request.tool_name} behavior=${result.behavior}`)
-            return result
         }
 
-        logger.debug(`[query] unsupported control request subtype: ${request.request.subtype}`)
         throw new Error('Unsupported control request subtype: ' + request.request.subtype)
     }
 

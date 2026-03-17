@@ -122,8 +122,6 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
         const teamState = session.teamState as TeamState | null | undefined
         const { agentRequestId, teamPerm } = resolveAgentRequestId(requestId, requests, teamState)
 
-        console.log('[perm][approve] requestId:', requestId, 'agentRequestId:', agentRequestId, 'teamPerm:', teamPerm?.requestId, 'requests keys:', Object.keys(requests ?? {}))
-
         if (agentRequestId) {
             // RPC path: send approval directly to the CLI agent via RPC
             const mode = parsed.data.mode
@@ -133,7 +131,6 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
                     return c.json({ error: 'Invalid permission mode for session flavor' }, 400)
                 }
             }
-            console.log('[perm][approve] RPC path: sessionId:', sessionId, 'agentRequestId:', agentRequestId)
             await engine.approvePermission(sessionId, agentRequestId, mode, parsed.data.allowTools, parsed.data.decision, parsed.data.answers)
             updateTeamPermissionStatus(engine, sessionId, session, requestId, 'approved')
             return c.json({ ok: true })
@@ -142,7 +139,6 @@ export function createPermissionsRoutes(getSyncEngine: () => SyncEngine | null):
         // Team permissions are resolved internally by the team lead agent.
         // No external approval path exists.
 
-        console.log('[perm][approve] 404: no match found')
         return c.json({ error: 'Request not found' }, 404)
     })
 
